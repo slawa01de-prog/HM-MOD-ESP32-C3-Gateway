@@ -1,0 +1,27 @@
+{
+  "project": "HM-MOD ESP32-C3 Gateway",
+  "published": "2026-10-07",
+  "tested_gateway_version": "v3.1.1",
+  "radio_module": "eQ-3 HM-MOD-RPI-PCB",
+  "radio_firmware": "2.8.6",
+  "transport": {
+    "protocol": "HB-RF-ETH",
+    "udp_port": 3008,
+    "uart": "115200 8N1",
+    "esp32_c3_rx_gpio": 6,
+    "esp32_c3_tx_gpio": 5,
+    "esp32_c3_reset_gpio": 7
+  },
+  "verified": [
+    "OpenCCU detected HM-MOD-RPI-PCB 2.8.6 over HB-RF-ETH",
+    "HomeMatic-RF/BidCos-RF practical device control passed",
+    "HomeMatic IP path detected by OpenCCU",
+    "bidirectional Host<->HM traffic",
+    "CRC errors 0 and drops 0 in stable test"
+  ],
+  "stable_source": "firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_1.ino",
+  "documentation": "docs/",
+  "security_note": "WebUI has no authentication; LAN-only deployment is recommended.",
+  "privacy_note": "Public screenshots/examples are redacted and use example IP addresses.",
+  "third_party_firmware": "Official eQ-3 .eq3 firmware is linked, not redistributed."
+}
