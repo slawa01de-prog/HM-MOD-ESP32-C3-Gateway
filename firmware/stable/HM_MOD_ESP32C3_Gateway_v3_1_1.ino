@@ -998,3 +998,788 @@ HbClient* findClient(const IPAddress &ip, uint16_t port) {
   }
   return nullptr;
 }
+
+void disconnectClient(HbClient &c) {
+  if (c.connected) { statDisconnects++; addLog("HB client disconnected: " + c.ip.toString()); }
+  c = HbClient();
+}
+
+HbClient* findOrCreateClient(const IPAddress &ip, uint16_t port) {
+  HbClient *existing = findClient(ip, port);
+  if (existing) return existing;
+
+  // hb_rf_eth.ko opens a NEW UDP source port on every connect/reconnect try.
+  // Its CONNECT reply timeout is only ~50 ms. Do not tear down a same-IP
+  // session merely because the source port changed; rebind the existing slot.
+  for (int i = 0; i < MAX_HB_CLIENTS; i++) {
+    if (clients[i].connected && clients[i].ip == ip) {
+      clients[i].port = port;
+      clients[i].lastRxMs = millis();
+      clients[i].started = false;
+      return &clients[i];
+    }
+  }
+
+  for (int i = 0; i < MAX_HB_CLIENTS; i++) {
+    if (!clients[i].connected) {
+      clients[i] = HbClient();
+      clients[i].ip = ip;
+      clients[i].port = port;
+      clients[i].endpointId = 1;
+      clients[i].lastRxMs = millis();
+      return &clients[i];
+    }
+  }
+  return nullptr;
+}
+
+void hbSendTyped(HbClient &c, uint8_t type, const uint8_t *payload, size_t plen) {
+  uint8_t pkt[1500];
+  if (plen + 4 > sizeof(pkt)) return;
+
+  pkt[0] = type;
+  pkt[1] = c.txCounter++;
+  if (plen) memcpy(pkt + 2, payload, plen);
+
+  uint16_t crc = crc16Bidcos(pkt, plen + 2);
+  pkt[plen + 2] = (uint8_t)(crc >> 8);
+  pkt[plen + 3] = (uint8_t)(crc & 0xFF);
+
+  hbUdp.beginPacket(c.ip, c.port);
+  hbUdp.write(pkt, plen + 4);
+  hbUdp.endPacket();
+}
+
+void hbBroadcastHmFrame(const uint8_t *frame, size_t len) {
+  if (maintenanceMode) return;
+
+  for (int i = 0; i < MAX_HB_CLIENTS; i++) {
+    HbClient &c = clients[i];
+    if (c.connected && c.started) {
+      hbSendTyped(c, T_FRAME, frame, len);
+      statHmToHost++;
+    }
+  }
+}
+
+bool decodeHmWire(const uint8_t *enc, size_t encLen, uint8_t *dec, size_t cap, size_t &decLen) {
+  decLen = 0;
+  bool esc = false;
+  for (size_t i = 0; i < encLen; i++) {
+    uint8_t b = enc[i];
+    if (i == 0) {
+      if (b != 0xFD || cap < 1) return false;
+      dec[decLen++] = b;
+      continue;
+    }
+    if (!esc && b == 0xFC) { esc = true; continue; }
+    if (esc) { b |= 0x80; esc = false; }
+    if (decLen >= cap) return false;
+    dec[decLen++] = b;
+  }
+  if (decLen < 7) return false;
+  uint16_t calc = crc16Bidcos(dec, decLen - 2);
+  uint16_t got = ((uint16_t)dec[decLen - 2] << 8) | dec[decLen - 1];
+  return calc == got;
+}
+
+void inspectHmFrame(const uint8_t *frame, size_t len) {
+  lastHmFrame = hexShort(frame, len);
+  lastHmFrameMs = millis();
+
+  uint8_t dec[2300];
+  size_t dl = 0;
+  if (!decodeHmWire(frame, len, dec, sizeof(dec), dl)) return;
+
+  String tag;
+  if (detectModeTagInFrame(dec, dl, tag)) moduleTag = tag;
+
+  if (dl < 9) return;
+  uint8_t dst = dec[3];
+  uint8_t cmd = dec[5];
+
+  // DualCoPro firmware version response.
+  if (dst == HM_DST_TRX && cmd == HM_CMD_TRX_ACK && dec[6] == 0x01 && dl >= 12) {
+    // GET_VERSION has a 10-byte response data field. Version is the first 3 bytes after status.
+    uint16_t packetLen = ((uint16_t)dec[1] << 8) | dec[2];
+    size_t dataLen = packetLen >= 3 ? packetLen - 3 : 0;
+    if (dataLen == 10) {
+      char v[20];
+      snprintf(v, sizeof(v), "%u.%u.%u", dec[7], dec[8], dec[9]);
+      moduleFirmware = v;
+    } else if (dataLen == 2) {
+      moduleMcuType = dec[7];
+      if (moduleMcuType == 3) moduleTypeName = "HM-MOD-RPI-PCB";
+    }
+  }
+
+  if (dst == HM_DST_HMSYSTEM && cmd == HM_CMD_HMSYSTEM_ACK && dec[6] == 0x02 && dl >= 15) {
+    uint16_t packetLen = ((uint16_t)dec[1] << 8) | dec[2];
+    size_t dataLen = packetLen >= 3 ? packetLen - 3 : 0;
+    if (dataLen == 7) {
+      char v[20];
+      snprintf(v, sizeof(v), "%u.%u.%u", dec[10], dec[11], dec[12]);
+      moduleFirmware = v;
+    } else if (dataLen == 11 && dl >= 18) {
+      char b[11]; memcpy(b, dec + 7, 10); b[10] = 0; moduleSerial = b;
+    }
+  }
+
+  if (dst == HM_DST_LLMAC && cmd == HM_CMD_LLMAC_ACK && dec[6] == 0x01) {
+    uint16_t packetLen = ((uint16_t)dec[1] << 8) | dec[2];
+    size_t dataLen = packetLen >= 3 ? packetLen - 3 : 0;
+    if (dataLen == 11 && dl >= 18) {
+      char b[11]; memcpy(b, dec + 7, 10); b[10] = 0; moduleSerial = b;
+    } else if (dataLen == 4 && dl >= 11) {
+      moduleBidCosAddress = ((uint32_t)dec[7] << 16) | ((uint32_t)dec[8] << 8) | dec[9];
+    }
+  }
+
+  if (dst == HM_DST_HMIP && cmd == HM_CMD_HMIP_ACK && dec[6] == 0x01 && dl >= 11) {
+    moduleHmIpAddress = ((uint32_t)dec[7] << 16) | ((uint32_t)dec[8] << 8) | dec[9];
+  }
+
+  if (dst == HM_DST_COMMON && cmd == HM_CMD_COMMON_ACK && dec[6] == 0x01) {
+    uint16_t packetLen = ((uint16_t)dec[1] << 8) | dec[2];
+    size_t dataLen = packetLen >= 3 ? packetLen - 3 : 0;
+    if (dataLen == 13 && dl >= 20) {
+      char b[32];
+      snprintf(b, sizeof(b), "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+               dec[7], dec[8], dec[9], dec[10], dec[11], dec[12],
+               dec[13], dec[14], dec[15], dec[16], dec[17], dec[18]);
+      moduleSGTIN = b;
+    }
+  }
+}
+
+void pumpHmUart() {
+  if (maintenanceMode) return;
+
+  while (HM.available()) {
+    uint8_t b = (uint8_t)HM.read();
+
+    if (hmParser.push(b)) {
+      statUartFrames++;
+      inspectHmFrame(hmParser.buf, hmParser.pos);
+      hbBroadcastHmFrame(hmParser.buf, hmParser.pos);
+      hmParser.reset();
+    }
+  }
+}
+
+void handleHbPacket(const uint8_t *data, size_t len,
+                    const IPAddress &ip, uint16_t port) {
+  if (maintenanceMode) return;
+  if (len < 4) return;
+
+  uint16_t crcCalc = crc16Bidcos(data, len - 2);
+  uint16_t crcRecv = ((uint16_t)data[len - 2] << 8) | data[len - 1];
+
+  if (crcCalc != crcRecv) {
+    statBadCrc++;
+    return;
+  }
+
+  uint8_t type = data[0];
+  uint8_t requestCounter = data[1];
+  const uint8_t *payload = data + 2;
+  size_t plen = len - 4;
+
+  HbClient *c = (type == T_CONNECT)
+                  ? findOrCreateClient(ip, port)
+                  : findClient(ip, port);
+
+  if (!c) return;
+
+  c->lastRxMs = millis();
+
+  switch (type) {
+    case T_CONNECT: {
+      bool wasConnected = c->connected;
+      c->connected = true;
+      c->started = false;
+
+      // IMPORTANT: hb_rf_eth.ko waits only about 50 ms for this reply.
+      // Send the reply first; logging happens afterwards.
+      if (plen == 1 && payload[0] == 1) {
+        if (!wasConnected) c->endpointId += 2;
+        uint8_t reply[2] = {1, requestCounter};
+        hbSendTyped(*c, T_CONNECT, reply, sizeof(reply));
+      }
+      else if (plen == 2 && payload[0] == 2) {
+        uint8_t clientEp = payload[1];
+
+        // New session (0) gets a new endpoint id.
+        // A reconnect carries the last endpoint id. Adopt it after an ESP
+        // reboot so the Linux driver can recover without reloading the module.
+        if (clientEp == 0) {
+          if (!wasConnected) c->endpointId += 2;
+        } else {
+          c->endpointId = clientEp;
+        }
+
+        uint8_t reply[3] = {2, requestCounter, c->endpointId};
+        hbSendTyped(*c, T_CONNECT, reply, sizeof(reply));
+      }
+
+      if (!wasConnected) {
+        statConnects++;
+        addLog("HB CONNECT: " + ip.toString());
+      }
+      break;
+    }
+
+    case T_DISCONNECT:
+      disconnectClient(*c);
+      break;
+
+    case T_KEEPALIVE:
+      break;
+
+    case T_LED:
+      break;
+
+    case T_RESET:
+      hmResetPulse("OpenCCU");
+      hmParser.reset();
+      break;
+
+    case T_STARTCONN:
+      c->started = true;
+      addLog("HB STARTCONN: " + ip.toString());
+      break;
+
+    case T_STOPCONN:
+      c->started = false;
+      break;
+
+    case T_FRAME:
+      if (plen > 0) {
+        lastHostFrame = hexShort(payload, plen);
+        lastHostFrameMs = millis();
+        HM.write(payload, plen);
+        HM.flush();
+        statHostToHm++;
+      }
+      break;
+
+    default:
+      statUnknown++;
+      break;
+  }
+}
+
+void pollHbUdp() {
+  while (true) {
+    int n = hbUdp.parsePacket();
+    if (n <= 0) break;
+
+    uint8_t pkt[1500];
+
+    if (n > (int)sizeof(pkt)) {
+      while (hbUdp.available()) hbUdp.read();
+      continue;
+    }
+
+    int rd = hbUdp.read(pkt, n);
+    if (rd <= 0) continue;
+
+    if (!maintenanceMode) {
+      handleHbPacket(pkt, (size_t)rd, hbUdp.remoteIP(), hbUdp.remotePort());
+    }
+  }
+}
+
+void hbKeepalive() {
+  if (maintenanceMode) return;
+
+  static uint32_t last = 0;
+  uint32_t now = millis();
+
+  if (now - last < 1000) return;
+  last = now;
+
+  for (int i = 0; i < MAX_HB_CLIENTS; i++) {
+    HbClient &c = clients[i];
+    if (!c.connected) continue;
+
+    if (now - c.lastRxMs > 5000) {
+      statKeepaliveTimeout++;
+      disconnectClient(c);
+      continue;
+    }
+
+    hbSendTyped(c, T_KEEPALIVE, nullptr, 0);
+  }
+}
+
+// ============================================================
+// Web UI
+// ============================================================
+String navBar() {
+  return F("<nav><a href='/'>Dashboard</a><a href='/diagnostics'>Funk & Relay</a>"
+           "<a href='/log'>System-Log</a><a href='/firmware'>HM-Firmware</a>"
+           "<a href='/esp'>ESP-Update</a><a href='/settings'>Einstellungen</a></nav>");
+}
+
+String htmlHeader(const String &title, bool autoRefresh = false) {
+  String h;
+  h += F("<!doctype html><html><head><meta charset='utf-8'>");
+  h += F("<meta name='viewport' content='width=device-width,initial-scale=1'>");
+  if (autoRefresh) h += F("<meta http-equiv='refresh' content='5'>");
+  h += "<title>" + title + "</title>";
+  h += F("<style>"
+         ":root{color-scheme:light dark;--bg:#f5f6f8;--card:#fff;--fg:#1c2025;--muted:#65707d;--accent:#ef6c2f;--line:#d8dde3}"
+         "@media(prefers-color-scheme:dark){:root{--bg:#111418;--card:#1a1f25;--fg:#edf1f5;--muted:#9ba7b4;--line:#343b44}}"
+         "*{box-sizing:border-box}body{font-family:system-ui,Segoe UI,Arial;margin:0;background:var(--bg);color:var(--fg)}"
+         ".wrap{max-width:1120px;margin:auto;padding:20px}h1{margin:8px 0 18px}h2{margin-top:24px}"
+         "nav{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}nav a{padding:9px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--fg);background:var(--card)}"
+         ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}"
+         ".k{font-size:.82rem;color:var(--muted);margin-bottom:4px}.v{font-size:1.15rem;font-weight:650;word-break:break-word}"
+         "table{border-collapse:collapse;width:100%;background:var(--card)}td,th{border:1px solid var(--line);padding:8px;text-align:left}"
+         "code,pre{word-break:break-all;white-space:pre-wrap}.ok{color:#149447;font-weight:700}.bad{color:#d43b45;font-weight:700}.warn{background:#fff3cd;color:#493d09;padding:12px;border:1px solid #e0c36a;border-radius:8px}"
+         "button,input{padding:9px 11px;margin:4px;border-radius:7px;border:1px solid var(--line)}button{cursor:pointer}progress{width:100%;height:24px}.small{font-size:.86rem;color:var(--muted)}"
+         "</style></head><body><div class='wrap'>");
+  h += navBar();
+  return h;
+}
+
+String htmlFooter() { return F("</div></body></html>"); }
+
+void clientSummary(int &active, int &started, String &ip, uint16_t &port, uint8_t &endpoint) {
+  active = started = 0; ip = "-"; port = 0; endpoint = 0;
+  for (int i = 0; i < MAX_HB_CLIENTS; i++) {
+    if (clients[i].connected) {
+      active++; ip = clients[i].ip.toString(); port = clients[i].port; endpoint = clients[i].endpointId;
+    }
+    if (clients[i].connected && clients[i].started) started++;
+  }
+}
+
+String htmlPage() {
+  int active, started; String clientIp; uint16_t clientPort; uint8_t endpoint;
+  clientSummary(active, started, clientIp, clientPort, endpoint);
+
+  String h = htmlHeader("HM-C3 Gateway v3.1", true);
+  h += F("<h1>HM-MOD ESP32-C3 Gateway v3.1</h1><div class='grid'>");
+  h += "<div class='card'><div class='k'>Gateway</div><div class='v'>" + WiFi.localIP().toString() + "</div><div class='small'>" + hostName + ".local · RSSI " + String(WiFi.RSSI()) + " dBm</div></div>";
+  h += "<div class='card'><div class='k'>OpenCCU / HB-RF-ETH</div><div class='v'>" + String(active) + " verbunden / " + String(started) + " gestartet</div><div class='small'>" + clientIp + " · UDP 3008</div></div>";
+  h += "<div class='card'><div class='k'>Funkmodul</div><div class='v'>" + moduleTypeName + "</div><div class='small'>" + moduleTag + " · Firmware " + moduleFirmware + "</div></div>";
+  h += "<div class='card'><div class='k'>Serial / SGTIN</div><div class='v'>" + moduleSerial + "</div><div class='small'>" + moduleSGTIN + "</div></div>";
+  h += "<div class='card'><div class='k'>HmIP-Adresse</div><div class='v'>" + hexAddress24(moduleHmIpAddress) + "</div></div>";
+  h += "<div class='card'><div class='k'>BidCos-Adresse</div><div class='v'>" + hexAddress24(moduleBidCosAddress) + "</div></div>";
+  h += "<div class='card'><div class='k'>Traffic</div><div class='v'>" + String(statHostToHm) + " → HM / " + String(statHmToHost) + " → Host</div><div class='small'>CRC-Fehler " + String(statBadCrc) + " · Drops " + String(statUartFrameDrops) + "</div></div>";
+  h += "<div class='card'><div class='k'>System</div><div class='v'>Uptime " + formatUptime() + "</div><div class='small'>Heap " + String(ESP.getFreeHeap()/1024) + " kB · Reset " + resetReasonText() + "</div></div>";
+  h += F("</div>");
+
+  if (maintenanceMode) h += F("<p class='warn'><b>Wartungsmodus aktiv.</b> HB-RF-ETH ist vorübergehend gesperrt.</p>");
+
+  h += F("<h2>Aktionen</h2><form method='POST' action='/probe' style='display:inline'><button>Modulinfo neu lesen</button></form>"
+         "<form method='POST' action='/reset' style='display:inline'><button>HM-Modul Reset</button></form>"
+         "<form method='POST' action='/reboot' style='display:inline'><button>ESP neu starten</button></form>");
+  h += htmlFooter();
+  return h;
+}
+
+String diagnosticsPage() {
+  int active, started; String clientIp; uint16_t clientPort; uint8_t endpoint;
+  clientSummary(active, started, clientIp, clientPort, endpoint);
+  String h = htmlHeader("Funk & Relay", true);
+  h += F("<h1>Funk & Relay</h1><table>");
+  h += "<tr><th>HB Client</th><td>" + clientIp + ":" + String(clientPort) + "</td></tr>";
+  h += "<tr><th>Endpoint-ID</th><td>" + String(endpoint) + "</td></tr>";
+  h += "<tr><th>Connects / Disconnects</th><td>" + String(statConnects) + " / " + String(statDisconnects) + "</td></tr>";
+  h += "<tr><th>Keepalive Timeouts</th><td>" + String(statKeepaliveTimeout) + "</td></tr>";
+  h += "<tr><th>Host → HM Frames</th><td>" + String(statHostToHm) + "</td></tr>";
+  h += "<tr><th>HM → Host Frames</th><td>" + String(statHmToHost) + "</td></tr>";
+  h += "<tr><th>UART komplette Frames</th><td>" + String(statUartFrames) + "</td></tr>";
+  h += "<tr><th>UART Frame Drops</th><td>" + String(statUartFrameDrops) + "</td></tr>";
+  h += "<tr><th>HB CRC Fehler</th><td>" + String(statBadCrc) + "</td></tr>";
+  h += "<tr><th>Resets gesamt</th><td>" + String(statResets) + "</td></tr>";
+  h += "<tr><th>Reset durch OpenCCU</th><td>" + String(statResetOpenCCU) + "</td></tr>";
+  h += "<tr><th>Reset durch WebUI</th><td>" + String(statResetWeb) + "</td></tr>";
+  h += "<tr><th>Reset Startup</th><td>" + String(statResetStartup) + "</td></tr>";
+  h += "<tr><th>Reset Updater</th><td>" + String(statResetUpdater) + "</td></tr>";
+  h += "<tr><th>WLAN Reconnects</th><td>" + String(statWifiReconnects) + "</td></tr></table>";
+  h += F("<h2>Letzte Frames</h2><table>");
+  h += "<tr><th>Host → HM</th><td><code>" + lastHostFrame + "</code></td></tr>";
+  h += "<tr><th>HM → Host</th><td><code>" + lastHmFrame + "</code></td></tr></table>";
+  h += F("<form method='POST' action='/statsreset'><button>Diagnosezähler zurücksetzen</button></form>");
+  h += htmlFooter();
+  return h;
+}
+
+String logPage() {
+  String h = htmlHeader("System-Log", true);
+  h += F("<h1>System-Log</h1><pre class='card'>");
+  if (!sysLogCount) h += "Noch keine Einträge.";
+  else {
+    int start = (sysLogHead + SYSLOG_LINES - sysLogCount) % SYSLOG_LINES;
+    for (int i = 0; i < sysLogCount; i++) {
+      int idx = (start + i) % SYSLOG_LINES;
+      h += htmlEscape(String(sysLog[idx])); h += "\n";
+    }
+  }
+  h += F("</pre><form method='POST' action='/logclear'><button>Log löschen</button></form>");
+  h += htmlFooter();
+  return h;
+}
+
+String firmwarePage() {
+  String h = htmlHeader("HM-MOD Firmware-Updater");
+  h += F("<h1>HM-MOD Firmware-Updater</h1><div class='warn'><b>Vor dem Flashen OpenCCU/RaspberryMatic stoppen.</b><br>"
+         "Nur passende HM-MOD-UART/HM-MOD-RPI-PCB .eq3-Dateien verwenden.</div>");
+  h += "<p>Modus: <b>" + moduleTag + "</b> · Firmware: <b>" + moduleFirmware + "</b> · Serial: <b>" + moduleSerial + "</b></p>";
+  h += F("<h2>1. .eq3-Datei hochladen</h2><form method='POST' action='/fwupload' enctype='multipart/form-data'>"
+         "<input type='file' name='firmware' accept='.eq3' required><button type='submit'>Datei hochladen</button></form>");
+  h += "<p>Datei vorhanden: <b>" + String(fwUploaded ? "JA" : "NEIN") + "</b><br>Upload-Größe: " + String(fwUploadedBytes) + " Byte<br>Erkannte Blöcke: " + String(fwBlockCount) + "</p>";
+  if (fwUploaded) {
+    h += F("<h2>2. Flash starten</h2><div class='warn'>Während des Schreibens Stromversorgung nicht unterbrechen.</div>"
+           "<form method='POST' action='/flash' onsubmit=\"return confirm('HM-Firmware wirklich schreiben?');\"><button type='submit'>Firmware jetzt flashen</button></form>");
+  }
+  h += F("<h2>Status</h2>");
+  h += "<progress value='" + String(flashPercent) + "' max='100'></progress><p><b>" + flashStatus + "</b></p>";
+  if (flashError.length()) h += "<p class='bad'>Fehler: " + htmlEscape(flashError) + "</p>";
+  h += htmlFooter();
+  return h;
+}
+
+String espUpdatePage() {
+  String h = htmlHeader("ESP Firmware Update");
+  h += F("<h1>ESP32-C3 Firmware-Update</h1><div class='warn'>Hier wird nur die ESP-Dongle-Firmware (.bin) aktualisiert, nicht die HM-Funkmodul-Firmware.</div>"
+         "<form method='POST' action='/espupdate' enctype='multipart/form-data' onsubmit=\"return confirm('ESP-Firmware aktualisieren?');\">"
+         "<input type='file' name='firmware' accept='.bin' required><button type='submit'>ESP .bin installieren</button></form>");
+  h += "<p>Freier Heap: " + String(ESP.getFreeHeap()/1024) + " kB</p>";
+  h += htmlFooter();
+  return h;
+}
+
+String settingsPage() {
+  String h = htmlHeader("Einstellungen");
+  h += F("<h1>Einstellungen</h1><h2>Netzwerk</h2><form method='POST' action='/saveconfig'>");
+  h += "<label>Hostname<br><input name='hostname' value='" + htmlEscape(hostName) + "'></label><br>";
+  h += "<label>WLAN SSID<br><input name='ssid' value='" + htmlEscape(wifiSsid) + "'></label><br>";
+  h += F("<label>WLAN Passwort<br><input name='pass' type='password' placeholder='leer = unverändert'></label><br>"
+         "<button>Speichern & neu starten</button></form>");
+  h += F("<p class='small'>Für OpenCCU empfiehlt sich eine feste DHCP-Zuordnung für 192.168.188.7 im Router.</p>");
+  h += htmlFooter();
+  return h;
+}
+
+File uploadFile;
+bool espUpdateOk = false;
+String espUpdateError = "";
+
+void setupWeb() {
+  web.on("/", HTTP_GET, []() { web.send(200, "text/html; charset=utf-8", htmlPage()); });
+  web.on("/diagnostics", HTTP_GET, []() { web.send(200, "text/html; charset=utf-8", diagnosticsPage()); });
+  web.on("/log", HTTP_GET, []() { web.send(200, "text/html; charset=utf-8", logPage()); });
+  web.on("/firmware", HTTP_GET, []() { web.send(200, "text/html; charset=utf-8", firmwarePage()); });
+  web.on("/esp", HTTP_GET, []() { web.send(200, "text/html; charset=utf-8", espUpdatePage()); });
+  web.on("/settings", HTTP_GET, []() { web.send(200, "text/html; charset=utf-8", settingsPage()); });
+
+  web.on("/fwupload", HTTP_POST,
+    []() {
+      if (uploadFile) uploadFile.close();
+      int blocks = 0; size_t decoded = 0; String err;
+      if (validateFirmwareFile(FW_PATH, blocks, decoded, err)) {
+        fwUploaded = true; fwBlockCount = blocks;
+        flashStatus = "Firmware-Datei geprüft: " + String(blocks) + " Blöcke";
+        flashError = ""; addLog("HM firmware file validated: " + String(blocks) + " blocks");
+      } else {
+        fwUploaded = false; fwBlockCount = 0; flashStatus = "Firmware-Datei ungültig"; flashError = err;
+        addLog("HM firmware upload invalid: " + err);
+      }
+      web.sendHeader("Location", "/firmware"); web.send(303);
+    },
+    []() {
+      HTTPUpload &up = web.upload();
+      if (up.status == UPLOAD_FILE_START) {
+        fwUploaded = false; fwUploadedBytes = 0; fwBlockCount = 0; flashError = "";
+        SPIFFS.remove(FW_PATH); uploadFile = SPIFFS.open(FW_PATH, FILE_WRITE);
+      } else if (up.status == UPLOAD_FILE_WRITE) {
+        if (uploadFile) { uploadFile.write(up.buf, up.currentSize); fwUploadedBytes += up.currentSize; }
+      } else if (up.status == UPLOAD_FILE_END) {
+        if (uploadFile) uploadFile.close();
+      } else if (up.status == UPLOAD_FILE_ABORTED) {
+        if (uploadFile) uploadFile.close(); SPIFFS.remove(FW_PATH); flashError = "Upload abgebrochen.";
+      }
+    }
+  );
+
+  web.on("/flash", HTTP_POST, []() {
+    if (!fwUploaded || flashBusy) { web.send(409, "text/plain", "Keine gültige Firmware-Datei oder Flash bereits aktiv."); return; }
+    bool ok = flashFirmwareNow();
+    String h = htmlHeader(ok ? "Firmware erfolgreich" : "Firmware Fehler");
+    if (ok) {
+      h += "<h1 class='ok'>HM-Firmware erfolgreich übertragen</h1><p>Modus: <b>" + moduleTag + "</b><br>Firmware: <b>" + moduleFirmware + "</b><br>Serial: <b>" + moduleSerial + "</b></p>";
+      h += F("<p>Der ESP startet in wenigen Sekunden neu. Danach OpenCCU wieder starten.</p>");
+    } else {
+      h += "<h1 class='bad'>Firmware-Update abgebrochen</h1><p>Fehler: <b>" + htmlEscape(flashError) + "</b></p>";
+    }
+    h += htmlFooter(); web.send(200, "text/html; charset=utf-8", h);
+  });
+
+  web.on("/espupdate", HTTP_POST,
+    []() {
+      String h = htmlHeader(espUpdateOk ? "ESP Update OK" : "ESP Update Fehler");
+      if (espUpdateOk) {
+        h += F("<h1 class='ok'>ESP-Firmware erfolgreich geschrieben</h1><p>Neustart in wenigen Sekunden.</p>");
+        rebootPending = true; rebootAt = millis() + 2500;
+      } else {
+        h += "<h1 class='bad'>ESP-Update fehlgeschlagen</h1><p>" + htmlEscape(espUpdateError) + "</p>";
+        maintenanceMode = false;
+      }
+      h += htmlFooter(); web.send(200, "text/html; charset=utf-8", h);
+    },
+    []() {
+      HTTPUpload &up = web.upload();
+      if (up.status == UPLOAD_FILE_START) {
+        maintenanceMode = true; disconnectAllHbClients(); espUpdateOk = false; espUpdateError = "";
+        addLog("ESP OTA upload start");
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) espUpdateError = "Update.begin fehlgeschlagen";
+      } else if (up.status == UPLOAD_FILE_WRITE) {
+        if (!espUpdateError.length() && Update.write(up.buf, up.currentSize) != up.currentSize) espUpdateError = "Flash-Schreibfehler";
+      } else if (up.status == UPLOAD_FILE_END) {
+        if (!espUpdateError.length() && Update.end(true)) { espUpdateOk = true; addLog("ESP OTA successful"); }
+        else if (!espUpdateError.length()) espUpdateError = "Update.end fehlgeschlagen";
+      } else if (up.status == UPLOAD_FILE_ABORTED) {
+        Update.abort(); espUpdateError = "Upload abgebrochen";
+      }
+    }
+  );
+
+  web.on("/api/status", HTTP_GET, []() {
+    int active, started; String clientIp; uint16_t p; uint8_t ep; clientSummary(active, started, clientIp, p, ep);
+    String j = "{";
+    j += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+    j += "\"hostname\":\"" + hostName + "\",";
+    j += "\"module\":\"" + moduleTypeName + "\",";
+    j += "\"mode\":\"" + moduleTag + "\",";
+    j += "\"firmware\":\"" + moduleFirmware + "\",";
+    j += "\"serial\":\"" + moduleSerial + "\",";
+    j += "\"hmip_address\":\"" + hexAddress24(moduleHmIpAddress) + "\",";
+    j += "\"bidcos_address\":\"" + hexAddress24(moduleBidCosAddress) + "\",";
+    j += "\"connected\":" + String(active) + ",\"started\":" + String(started) + ",";
+    j += "\"host_to_hm\":" + String(statHostToHm) + ",\"hm_to_host\":" + String(statHmToHost) + ",";
+    j += "\"crc_errors\":" + String(statBadCrc) + ",\"heap\":" + String(ESP.getFreeHeap()) + ",";
+    j += "\"rssi\":" + String(WiFi.RSSI()) + ",\"maintenance\":" + String(maintenanceMode ? "true" : "false");
+    j += "}"; web.send(200, "application/json", j);
+  });
+
+  web.on("/api/log", HTTP_GET, []() {
+    String out;
+    int start = (sysLogHead + SYSLOG_LINES - sysLogCount) % SYSLOG_LINES;
+    for (int i = 0; i < sysLogCount; i++) { out += sysLog[(start + i) % SYSLOG_LINES]; out += "\n"; }
+    web.send(200, "text/plain; charset=utf-8", out);
+  });
+
+  web.on("/probe", HTTP_POST, []() {
+    if (flashBusy) { web.send(409, "text/plain", "Firmware-Update aktiv."); return; }
+    maintenanceMode = true; disconnectAllHbClients();
+    bool ok = enterApplication() && queryModuleInfo();
+    hmResetPulse("Web"); hmParser.reset(); maintenanceMode = false;
+    addLog(String("Manual module probe: ") + (ok ? "OK" : "FAILED"));
+    web.sendHeader("Location", "/"); web.send(303);
+  });
+
+  web.on("/reset", HTTP_POST, []() {
+    if (flashBusy) { web.send(409, "text/plain", "Firmware-Update aktiv."); return; }
+    hmResetPulse("Web"); hmParser.reset(); web.sendHeader("Location", "/"); web.send(303);
+  });
+
+  web.on("/reboot", HTTP_POST, []() {
+    if (flashBusy) { web.send(409, "text/plain", "Firmware-Update aktiv."); return; }
+    web.send(200, "text/plain", "Restart..."); delay(300); ESP.restart();
+  });
+
+  web.on("/statsreset", HTTP_POST, []() {
+    statBadCrc = statUnknown = statHostToHm = statHmToHost = statKeepaliveTimeout = statUartFrames = statUartFrameDrops = 0;
+    statConnects = statDisconnects = 0; addLog("Diagnostic counters reset");
+    web.sendHeader("Location", "/diagnostics"); web.send(303);
+  });
+
+  web.on("/logclear", HTTP_POST, []() {
+    sysLogHead = sysLogCount = 0; web.sendHeader("Location", "/log"); web.send(303);
+  });
+
+  web.on("/saveconfig", HTTP_POST, []() {
+    String newHost = web.arg("hostname"); newHost.trim();
+    String newSsid = web.arg("ssid"); newSsid.trim();
+    String newPass = web.arg("pass");
+    prefs.begin("hmc3", false);
+    if (newHost.length()) prefs.putString("hostname", newHost);
+    if (newSsid.length()) prefs.putString("ssid", newSsid);
+    if (newPass.length()) prefs.putString("pass", newPass);
+    prefs.end();
+    web.send(200, "text/plain", "Gespeichert. Neustart..."); delay(400); ESP.restart();
+  });
+
+  web.begin(); addLog("WebUI started");
+}
+
+// ============================================================
+// WiFi
+// ============================================================
+void startConfigAp() {
+  uint64_t mac = ESP.getEfuseMac();
+  char suffix[5];
+  snprintf(suffix, sizeof(suffix), "%04X", (uint16_t)(mac & 0xFFFF));
+
+  String ap = "HM-C3-" + String(suffix);
+
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(ap.c_str());
+
+  Serial.println("Setup-AP: " + ap);
+  Serial.println("Setup-IP: " + WiFi.softAPIP().toString());
+}
+
+void connectWifi() {
+  prefs.begin("hmc3", true);
+  wifiSsid = prefs.getString("ssid", "");
+  wifiPass = prefs.getString("pass", "");
+  String savedHost = prefs.getString("hostname", "");
+  prefs.end();
+
+  uint64_t mac = ESP.getEfuseMac();
+  char suffix[5];
+  snprintf(suffix, sizeof(suffix), "%04x", (uint16_t)(mac & 0xFFFF));
+  hostName = savedHost.length() ? savedHost : ("hm-c3-" + String(suffix));
+
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);   // critical: hb_rf_eth CONNECT timeout is only ~50 ms
+  WiFi.setHostname(hostName.c_str());
+
+  if (wifiSsid.length()) {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    uint32_t start = millis();
+    Serial.print("WLAN");
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) { Serial.print("."); delay(250); }
+    Serial.println();
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    lastWifiOkMs = millis(); addLog("WiFi connected: " + WiFi.localIP().toString());
+  } else {
+    startConfigAp(); addLog("WiFi failed - configuration AP active");
+  }
+}
+
+void maintainWifi() {
+  static uint32_t lastTry = 0;
+  if (WiFi.status() == WL_CONNECTED) {
+    lastWifiOkMs = millis();
+    return;
+  }
+  if (!wifiSsid.length()) return;
+  if (millis() - lastTry < 10000) return;
+
+  lastTry = millis();
+  statWifiReconnects++;
+  addLog("WiFi reconnect attempt");
+
+  // Do not call WiFi.disconnect() here. A brief transient status must not
+  // deliberately tear down an otherwise recoverable HB-RF-ETH session.
+  WiFi.reconnect();
+}
+
+void setupMdns() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!MDNS.begin(hostName.c_str())) return;
+
+  MDNS.addService("hbrfeth", "udp", HB_PORT);
+  MDNS.addServiceTxt("hbrfeth", "udp", "wire", "hb-rf-eth");
+  MDNS.addServiceTxt("hbrfeth", "udp", "model", "HM-C3-v3.1.1");
+  MDNS.addServiceTxt("hbrfeth", "udp", "radio", "HM-MOD-RPI-PCB");
+  MDNS.addService("http", "tcp", HTTP_PORT);
+}
+
+// ============================================================
+// Startup
+// ============================================================
+void startupHmCheck() {
+  while (HM.available()) HM.read();
+
+  hmResetPulse("Startup");
+  String tag;
+  if (waitForBootTag(tag, 1800)) {
+    moduleTag = tag;
+    addLog("HM boot mode: " + tag);
+  }
+
+  if (enterApplication()) {
+    queryModuleInfo();
+  } else {
+    addLog("HM application start failed during startup probe");
+  }
+
+  // Return to bootloader-ready state for OpenCCU hardware detection.
+  hmResetPulse("Startup");
+  hmParser.reset();
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println(" HM-MOD ESP32-C3 GATEWAY v3.1.1 PRO");
+  Serial.println(" HB-RF-ETH + DualCoPro + Diagnostics + OTA");
+  Serial.println("====================================");
+
+  pinMode(HM_RESET_PIN, OUTPUT);
+  digitalWrite(HM_RESET_PIN, HIGH);
+
+  HM.begin(HM_BAUD, SERIAL_8N1, HM_RX_PIN, HM_TX_PIN);
+
+  if (!SPIFFS.begin(true)) {
+    Serial.println("SPIFFS FEHLER");
+  } else {
+    if (SPIFFS.exists(FW_PATH)) {
+      int blocks = 0;
+      size_t decoded = 0;
+      String err;
+      fwUploaded = validateFirmwareFile(FW_PATH, blocks, decoded, err);
+      if (fwUploaded) {
+        fwBlockCount = blocks;
+        fwUploadedBytes = SPIFFS.open(FW_PATH, FILE_READ).size();
+      }
+    }
+  }
+
+  startupHmCheck();
+  connectWifi();
+
+  hbUdp.begin(HB_PORT);
+  setupWeb();
+  setupMdns();
+
+  addLog("WiFi power save: OFF (HB-RF-ETH low latency)");
+  addLog("Gateway ready: HB-RF-ETH UDP/3008");
+  Serial.println("Dashboard: http://" + hostName + ".local/");
+}
+
+void loop() {
+  // HB-RF-ETH first: Linux waits only ~50 ms for CONNECT.
+  if (!flashBusy) {
+    pollHbUdp();
+    if (!maintenanceMode) {
+      pumpHmUart();
+      hbKeepalive();
+    }
+    web.handleClient();
+  }
+
+  maintainWifi();
+
+  if (rebootPending && (int32_t)(millis() - rebootAt) >= 0) {
+    delay(100);
+    ESP.restart();
+  }
+
+  delay(1);
+}
