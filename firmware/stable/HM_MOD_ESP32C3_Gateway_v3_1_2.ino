@@ -1798,7 +1798,8 @@ void setup() {
   setupWeb();
   setupMdns();
 
-  addLog("WiFi power save: OFF (HB-RF-ETH low latency)");\n  addLog("HB-RF-ETH session-preserving reconnect: ENABLED");
+  addLog("WiFi power save: OFF (HB-RF-ETH low latency)");
+  addLog("HB-RF-ETH session-preserving reconnect: ENABLED");
   addLog("Gateway ready: HB-RF-ETH UDP/3008");
   Serial.println("Dashboard: http://" + hostName + ".local/");
 }
