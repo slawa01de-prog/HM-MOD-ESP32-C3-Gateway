@@ -1,0 +1,54 @@
+name: Build ESP32-C3 Gateway
+
+on:
+  push:
+    paths:
+      - 'firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_2.ino'
+      - '.github/workflows/build-esp32.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core 3.3.11
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.11
+
+      - name: Prepare sketch folder
+        run: |
+          mkdir -p build_sketch/HM_MOD_ESP32C3_Gateway_v3_1_2
+          cp firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_2.ino build_sketch/HM_MOD_ESP32C3_Gateway_v3_1_2/HM_MOD_ESP32C3_Gateway_v3_1_2.ino
+
+      - name: Compile
+        run: |
+          mkdir -p build
+          arduino-cli compile \
+            --fqbn 'esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,FlashFreq=80,FlashMode=qio,FlashSize=4M,PartitionScheme=default,DebugLevel=none,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default' \
+            --output-dir build \
+            build_sketch/HM_MOD_ESP32C3_Gateway_v3_1_2
+
+      - name: Collect firmware
+        run: |
+          cp build/HM_MOD_ESP32C3_Gateway_v3_1_2.ino.bin build/HM_MOD_ESP32C3_Gateway_v3_1_2.bin
+          sha256sum build/HM_MOD_ESP32C3_Gateway_v3_1_2.bin > build/SHA256SUMS.txt
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HM_MOD_ESP32C3_Gateway_v3_1_2
+          path: |
+            build/HM_MOD_ESP32C3_Gateway_v3_1_2.bin
+            build/HM_MOD_ESP32C3_Gateway_v3_1_2.ino.bootloader.bin
+            build/HM_MOD_ESP32C3_Gateway_v3_1_2.ino.partitions.bin
+            build/boot_app0.bin
+            build/SHA256SUMS.txt
