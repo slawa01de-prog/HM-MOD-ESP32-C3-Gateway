@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560">
+<rect width="1280" height="560" fill="#0f141a"/>
+<style>.t{font-family:Arial,sans-serif;fill:#f2f5f7}.s{font-family:Arial,sans-serif;fill:#9fb0c0}.b{fill:#171e26;stroke:#34404d;stroke-width:1}.h{font-size:34px;font-weight:bold}.v{font-size:22px;font-weight:bold}.l{font-size:14px}</style>
+<text x="90" y="70" class="t h">HM-MOD ESP32-C3 Gateway v3.1.1</text>
+<g transform="translate(90 115)">
+<rect class="b" x="0" y="0" width="270" height="110" rx="12"/><text class="s l" x="18" y="28">Gateway</text><text class="t v" x="18" y="58">192.168.1.50</text><text class="s l" x="18" y="82">RSSI -48 dBm</text>
+<rect class="b" x="285" y="0" width="270" height="110" rx="12"/><text class="s l" x="303" y="28">OpenCCU / HB-RF-ETH</text><text class="t v" x="303" y="58">1 verbunden / 1 gestartet</text><text class="s l" x="303" y="82">UDP 3008</text>
+<rect class="b" x="570" y="0" width="270" height="110" rx="12"/><text class="s l" x="588" y="28">Funkmodul</text><text class="t v" x="588" y="58">HM-MOD-RPI-PCB</text><text class="s l" x="588" y="82">DualCoPro_App · FW 2.8.6</text>
+<rect class="b" x="855" y="0" width="270" height="110" rx="12"/><text class="s l" x="873" y="28">Serial / SGTIN</text><text class="t v" x="873" y="58">redacted</text><text class="s l" x="873" y="82">public screenshot</text>
+<rect class="b" x="0" y="125" width="270" height="105" rx="12"/><text class="s l" x="18" y="153">HmIP-Adresse</text><text class="t v" x="18" y="185">redacted</text>
+<rect class="b" x="285" y="125" width="270" height="105" rx="12"/><text class="s l" x="303" y="153">BidCos-Adresse</text><text class="t v" x="303" y="185">redacted</text>
+<rect class="b" x="570" y="125" width="270" height="105" rx="12"/><text class="s l" x="588" y="153">Traffic</text><text class="t v" x="588" y="185">133 → HM / 276 → Host</text><text class="s l" x="588" y="208">CRC 0 · Drops 0</text>
+<rect class="b" x="855" y="125" width="270" height="105" rx="12"/><text class="s l" x="873" y="153">System</text><text class="t v" x="873" y="185">stabil</text><text class="s l" x="873" y="208">WiFi power save OFF</text>
+</g>
+<text x="90" y="410" class="t v">Erfolgreicher Praxiszustand</text><text x="90" y="442" class="s l">Bidirektionaler Funkverkehr, HB-RF-ETH 1/1, Firmware 2.8.6.</text>
+</svg>
