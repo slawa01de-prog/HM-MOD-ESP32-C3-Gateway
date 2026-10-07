@@ -9,7 +9,7 @@ und transportiert sowohl **HomeMatic-RF / BidCos-RF** als auch **HomeMatic IP**
 > Getesteter Gateway-Stand: **v3.1.1**  
 > HM-MOD-RPI-PCB Firmware: **2.8.6**
 
-![Gateway Dashboard](screenshots/03_Gateway_Dashboard_stabil.png)
+![Gateway Dashboard](screenshots/03_Gateway_Dashboard_stabil.svg)
 
 ## Funktionen
 
@@ -90,7 +90,7 @@ Im Test wurde das Modul von OpenCCU als `HM-MOD-RPI-PCB (2.8.6)` über
 `HB-RF-ETH` erkannt. Danach ließ sich ein vorhandenes BidCos-RF-Thermostat
 wieder schalten; die Traffic-Zähler liefen in beide Richtungen.
 
-![OpenCCU Hardware Info](screenshots/01_OpenCCU_Hardwareinfo_2.8.6.png)
+![OpenCCU Hardware Info](screenshots/01_OpenCCU_Hardwareinfo_2.8.6.svg)
 
 ## Dokumentation
 
