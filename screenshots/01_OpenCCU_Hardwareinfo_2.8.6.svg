@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="600">
+<rect width="1050" height="600" fill="#9ba8aa"/>
+<style>.t{font-family:Arial,sans-serif;fill:#111}.h{font-size:22px;font-weight:bold}.s{font-size:18px}</style>
+<text x="420" y="50" class="t h">CCU Hardware Info</text>
+<text x="365" y="105" class="t h">HomeMaticIP-RF (HmIP) Info</text>
+<text x="260" y="145" class="t s">RF-Module (Firmware): HM-MOD-RPI-PCB (2.8.6)</text>
+<text x="260" y="177" class="t s">Device-Node: /dev/raw-uart (HB-RF-ETH@192.168.1.50)</text>
+<text x="260" y="209" class="t s">Address / SGTIN / Serial: redacted</text>
+<text x="380" y="285" class="t h">HomeMatic-RF (HmRF) Info</text>
+<text x="260" y="325" class="t s">RF-Module (Firmware): HM-MOD-RPI-PCB (2.8.6)</text>
+<text x="260" y="357" class="t s">Device-Node: /dev/raw-uart (HB-RF-ETH@192.168.1.50)</text>
+<text x="260" y="389" class="t s">Address / Serial: redacted</text>
+<text x="260" y="470" class="t s">Ergebnis: HmIP und HmRF wurden über das ESP32-C3 Gateway erkannt.</text>
+</svg>
