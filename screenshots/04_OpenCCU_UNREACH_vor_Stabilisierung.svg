@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430">
+<rect width="1200" height="430" fill="#f2f2f2"/>
+<style>.t{font-family:Arial,sans-serif;fill:#111}.h{font-size:24px;font-weight:bold}.r{fill:#fff;stroke:#444}.u{fill:#ffff00;font-weight:bold}</style>
+<text x="30" y="45" class="t h">OpenCCU – Beispiel vor Stabilisierung</text>
+<g transform="translate(30 75)">
+<rect class="r" x="0" y="0" width="1140" height="55"/><text x="20" y="34" class="t">BidCos-RF Gerät A</text><text x="830" y="34" class="t u">UNREACH</text><text x="960" y="34" class="t">-67 dBm</text>
+<rect class="r" x="0" y="55" width="1140" height="55"/><text x="20" y="89" class="t">BidCos-RF Gerät B</text><text x="830" y="89" class="t u">UNREACH</text><text x="960" y="89" class="t">-58 dBm</text>
+<rect class="r" x="0" y="110" width="1140" height="55"/><text x="20" y="144" class="t">BidCos-RF Gerät C</text><text x="830" y="144" class="t u">UNREACH</text><text x="960" y="144" class="t">-77 dBm</text>
+<rect class="r" x="0" y="165" width="1140" height="55"/><text x="20" y="199" class="t">BidCos-RF Gerät D</text><text x="830" y="199" class="t u">UNREACH</text><text x="960" y="199" class="t">-56 dBm</text>
+</g>
+<text x="30" y="345" class="t">Diese Störungen traten während des HB-RF-ETH-Reconnect-Problems auf und verschwanden nach Stabilisierung.</text>
+</svg>
