@@ -1,0 +1,17 @@
+# Arduino / editor
+.vscode/
+.idea/
+*.swp
+*.tmp
+*.log
+
+# Build output
+build/
+.pio/
+*.bin
+*.elf
+*.map
+
+# OS
+.DS_Store
+Thumbs.db
