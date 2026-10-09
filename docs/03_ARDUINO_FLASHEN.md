@@ -25,7 +25,7 @@ esp32 3.3.11
 1. Datei öffnen:
 
 ```text
-firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_1.ino
+firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_4.ino
 ```
 
 2. ESP32-C3 per USB anschließen.
@@ -36,7 +36,7 @@ firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_1.ino
 Ein normaler Start enthält ungefähr:
 
 ```text
-HM-MOD ESP32-C3 GATEWAY v3.1.1 PRO
+HM-MOD ESP32-C3 GATEWAY v3.1.4 PRO
 HM reset: Startup
 HM boot mode: Co_CPU_BL
 HM application: DualCoPro_App
