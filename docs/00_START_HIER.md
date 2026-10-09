@@ -55,15 +55,15 @@ Die IP-Adressen sind Beispiele aus dem getesteten Netz und können im eigenen Ne
 ## Archive-Inhalt
 
 - `firmware/stable/` – getesteter aktueller Sketch
-- `firmware/archive/` – ältere Entwicklungsstände v1 bis v3.1.1
+- `firmware/archive/` – ältere Entwicklungsstände v1 bis v3.1.4
 - `docs/` – komplette Inbetriebnahme, Verdrahtung und Fehlerbehebung
 - `screenshots/` – Screenshots vom erfolgreichen Betrieb
 - `PROJECT_MANIFEST.json` – Dateiliste, Versionen und SHA256-Prüfsummen
 
 ## Bekannte Besonderheiten
 
-1. In einigen v3.1/v3.1.1-WebUI-Seiten steht im Titel weiterhin `v3.1`. Der getestete Hotfix ist
-   trotzdem v3.1.1.
+1. In einigen v3.1/v3.1.4-WebUI-Seiten steht im Titel weiterhin `v3.1`. Der getestete Hotfix ist
+   trotzdem v3.1.4.
 2. Die im Gateway passiv dekodierte **HmIP-Adresse kann falsch angezeigt werden**. Für die korrekte
    HmIP-Adresse ist die OpenCCU-Hilfeseite maßgeblich.
 3. Die Buttons `HM-Modul Reset` und `Modulinfo neu lesen` sollten im normalen Betrieb nicht benutzt
