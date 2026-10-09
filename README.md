@@ -6,7 +6,7 @@ und transportiert sowohl **HomeMatic-RF / BidCos-RF** als auch **HomeMatic IP**
 über das originale eQ-3 Funkmodul.
 
 > Status: **funktionierender Praxisaufbau**  
-> Getesteter Gateway-Stand: **v3.1.1**  
+> Getesteter Gateway-Stand: **v3.1.4**  
 > HM-MOD-RPI-PCB Firmware: **2.8.6**
 
 ![Gateway Dashboard](screenshots/03_Gateway_Dashboard_stabil.svg)
@@ -22,7 +22,9 @@ und transportiert sowohl **HomeMatic-RF / BidCos-RF** als auch **HomeMatic IP**
 - Funk- und Relay-Diagnose
 - System-Log
 - CRC-/Drop-Zähler
-- WLAN-Reconnect und HB-RF-ETH-Reconnect-Härtung
+- HB-RF-ETH Self-Healing mit session-erhaltendem Reconnect
+- UDP-Rebind nach WLAN-/Keepalive-Aussetzern
+- 24-Frame HM→Host-Ringpuffer für kurze Unterbrechungen
 - ESP32-Firmwareupdate über WebUI
 - HM-MOD `.eq3` Firmware-Updater über WebUI
 - Anzeige von Modulstatus, Firmware, Uptime, Heap und Traffic
@@ -62,7 +64,7 @@ ESP GND      ---> HM GND
 2. `USB CDC On Boot = Enabled`
 3. `Flash Size = 4 MB`
 4. `Partition Scheme = Default 4MB with SPIFFS`
-5. `firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_1.ino` flashen
+5. `firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_4.ino` flashen
 6. WLAN konfigurieren
 7. Gateway-IP im Router per DHCP-Reservation fest vergeben
 8. In OpenCCU:
@@ -108,15 +110,14 @@ wieder schalten; die Traffic-Zähler liefen in beide Richtungen.
 
 ## Bekannte Punkte
 
-- Die passive HmIP-Adressanzeige der v3.1.1-WebUI kann einen falschen Wert
+- Die passive HmIP-Adressanzeige kann einen falschen Wert
   übernehmen. Für die korrekte RF-Adresse ist die OpenCCU-Hardwareinfo maßgeblich.
 - Während OpenCCU aktiv verbunden ist, sollten `HM-Modul Reset` und
   `Modulinfo neu lesen` nicht unnötig benutzt werden.
 - Die WebUI besitzt derzeit keine Anmeldung. Das Gateway sollte deshalb nur in
   einem vertrauenswürdigen LAN betrieben und nicht direkt ins Internet
   freigegeben werden.
-- Der Titel der getesteten v3.1.1 kann an einzelnen Stellen noch `v3.1` anzeigen;
-  das ist nur kosmetisch.
+- v3.1.4 vermeidet beim ESP-Neustart einen unnötigen HM-MOD-Reset und unterscheidet zwischen ESP-Software-Neustart und Kaltstart.
 
 ## HM-MOD Firmware 2.8.6
 
