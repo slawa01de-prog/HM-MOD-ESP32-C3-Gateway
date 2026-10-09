@@ -58,3 +58,26 @@ BidCos-Gerät erfolgreich geschaltet
 - optional Web-Login
 - optional MQTT / Home Assistant Auto-Discovery
 - Backup/Restore der Gateway-Einstellungen
+
+
+## v3.1.2
+
+- HB-RF-ETH Sessionzustand bleibt bei kurzem Transport-Timeout erhalten
+- Endpoint-ID und STARTCONN werden bei Reconnect nicht mehr unnötig verworfen
+- schnellere WLAN-Reconnect-Versuche
+
+## v3.1.3
+
+- HB-RF-ETH Self-Healing
+- UDP-Rebind bei WLAN-Recovery und Keepalive-Timeout
+- 24-Frame HM→Host-Ringpuffer mit 4 s Maximalalter
+- Queue-/UDP-Diagnosewerte im WebUI
+
+## v3.1.4 – aktueller getesteter Stand
+
+- ESP-Neustart setzt/probt das HM-MOD nicht mehr automatisch
+- bestehender Funkmodulzustand bleibt bei ESP-OTA/Software-Neustart erhalten
+- ESP-Software-/Watchdog-Neustart kann bestehende OpenCCU-Session wieder aufnehmen
+- Kaltstart wird separat erkannt; OpenCCU-Neustart wird dann gefordert
+- erfolgreicher Test: Host→HM und HM→Host laufen nach ESP-Update ohne OpenCCU-Neustart
+- Keepalive Timeouts 0, UDP Sendefehler 0, CRC Fehler 0, UART Drops 0 im unmittelbaren Funktionstest
