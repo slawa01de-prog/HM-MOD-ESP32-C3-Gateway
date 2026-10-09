@@ -22,7 +22,7 @@ Partition: Default 4MB with SPIFFS
 Sketch:
 
 ```text
-firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_1.ino
+firmware/stable/HM_MOD_ESP32C3_Gateway_v3_1_4.ino
 ```
 
 ## OpenCCU
